@@ -1,0 +1,11 @@
+node_modules/
+auth/
+.env
+*.log
+.DS_Store
+*.csv
+frontend/
+*.txt
+cd
+dir
+
