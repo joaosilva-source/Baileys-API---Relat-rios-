@@ -46,13 +46,25 @@ async function connect() {
 
       if (qr) {
         currentQR = qr;
-        console.log('\n═══════════════════════════════════════════════════════');
+        console.log('\n');
+        console.log('═══════════════════════════════════════════════════════');
         console.log('📱 ESCANEIE O QR CODE AGORA COM SEU WHATSAPP!');
-        console.log('═══════════════════════════════════════════════════════\n');
-        qrcode.generate(qr, { small: true });
-        console.log('\n═══════════════════════════════════════════════════════');
+        console.log('═══════════════════════════════════════════════════════');
+        console.log('\n');
+        
+        // Gerar QR Code no terminal (tentativa com tamanho maior para melhor visualização)
+        try {
+          qrcode.generate(qr, { small: false });
+        } catch (error) {
+          // Se falhar, tentar com small
+          qrcode.generate(qr, { small: true });
+        }
+        
+        console.log('\n');
+        console.log('═══════════════════════════════════════════════════════');
         console.log('💡 DICA: Acesse /qr no navegador para ver o QR Code');
-        console.log('═══════════════════════════════════════════════════════\n');
+        console.log('═══════════════════════════════════════════════════════');
+        console.log('\n');
         reconnectAttempts = 0; // Reset ao mostrar QR
       }
 
