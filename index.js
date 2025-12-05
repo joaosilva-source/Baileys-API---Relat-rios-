@@ -446,6 +446,74 @@ app.get('/grupos', async (req, res) => {
   }
 });
 
+// Endpoint para salvar IDs dos grupos em arquivo e fazer push
+app.post('/grupos/salvar-e-push', async (req, res) => {
+  if (!isConnected || !sock) {
+    return res.status(503).json({ erro: 'WhatsApp desconectado' });
+  }
+
+  try {
+    const grupos = await sock.groupFetchAllParticipating();
+    const lista = Object.values(grupos).map(g => ({
+      nome: g.subject || 'Sem nome',
+      id: g.id,
+      participantes: g.participants?.length || 0,
+      criadoEm: new Date().toISOString()
+    }));
+
+    // Salvar em arquivo JSON
+    const dados = {
+      atualizadoEm: new Date().toISOString(),
+      totalGrupos: lista.length,
+      grupos: lista
+    };
+
+    const arquivoGrupos = 'grupos-whatsapp.json';
+    fs.writeFileSync(arquivoGrupos, JSON.stringify(dados, null, 2), 'utf8');
+    console.log(`[GRUPOS] Arquivo ${arquivoGrupos} salvo com ${lista.length} grupos`);
+
+    // Tentar fazer commit e push
+    const { exec } = require('child_process');
+    const util = require('util');
+    const execPromise = util.promisify(exec);
+
+    try {
+      // Adicionar arquivo ao git
+      await execPromise(`git add ${arquivoGrupos}`);
+      console.log('[GIT] Arquivo adicionado ao staging');
+
+      // Fazer commit
+      await execPromise(`git commit -m "Atualiza lista de grupos do WhatsApp - ${lista.length} grupos"`);
+      console.log('[GIT] Commit realizado');
+
+      // Fazer push
+      await execPromise('git push origin clean-main:main');
+      console.log('[GIT] Push realizado com sucesso');
+
+      res.json({
+        sucesso: true,
+        mensagem: `Lista de ${lista.length} grupos salva e enviada para o repositório`,
+        totalGrupos: lista.length,
+        arquivo: arquivoGrupos,
+        grupos: lista
+      });
+    } catch (gitError) {
+      console.log('[GIT] Erro ao fazer push:', gitError.message);
+      res.json({
+        sucesso: true,
+        mensagem: `Lista de ${lista.length} grupos salva localmente`,
+        aviso: 'Arquivo salvo, mas push falhou: ' + gitError.message,
+        totalGrupos: lista.length,
+        arquivo: arquivoGrupos,
+        grupos: lista
+      });
+    }
+  } catch (e) {
+    console.log('[ERRO]', e);
+    res.status(500).json({ erro: 'Erro ao processar grupos: ' + e.message });
+  }
+});
+
 // Endpoint para verificar status da conexão
 app.get('/status', (req, res) => {
   res.json({

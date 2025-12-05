@@ -8,4 +8,6 @@ frontend/
 *.txt
 cd
 dir
+# Manter arquivo de grupos
+!grupos-whatsapp.json
 
