@@ -32,7 +32,7 @@ async function connect() {
       defaultQueryTimeoutMs: 60000,
       keepAliveIntervalMs: 30000, // Keep-alive a cada 30 segundos
       markOnlineOnConnect: true,
-      printQRInTerminal: false, // Geramos manualmente para melhor controle
+      // printQRInTerminal removido - geramos manualmente
       browser: ['Relatorios API', 'Chrome', '1.0.0'],
       getMessage: async (key) => {
         return {
@@ -87,10 +87,24 @@ async function connect() {
         const status = lastDisconnect?.error?.output?.statusCode;
         const shouldReconnect = status !== DisconnectReason.loggedOut;
         
+        console.log(`[CONEXÃO] Status: ${status}, Reason: ${DisconnectReason[status] || 'desconhecido'}`);
+        
         if (status === DisconnectReason.loggedOut) {
           console.log('DESLOGADO → Apagando auth...');
-          fs.rmSync('auth', { recursive: true, force: true });
+          try {
+            if (fs.existsSync('auth')) {
+              fs.rmSync('auth', { recursive: true, force: true });
+              console.log('Auth apagado com sucesso');
+            }
+          } catch (error) {
+            console.log('Erro ao apagar auth:', error.message);
+          }
           reconnectAttempts = 0;
+          // Aguardar um pouco antes de reconectar após logout
+          setTimeout(() => {
+            reconnecting = false;
+            connect();
+          }, 3000);
         } else {
           // Retry exponencial: 2s, 4s, 8s, 16s, max 30s
           const delay = Math.min(2000 * Math.pow(2, reconnectAttempts), 30000);
@@ -106,9 +120,13 @@ async function connect() {
         }
       }
 
-      // Detectar conexão instável
+      // Detectar estados de conexão
       if (connection === 'connecting') {
-        console.log('Conectando ao WhatsApp...');
+        console.log('🔄 Conectando ao WhatsApp...');
+      }
+      
+      if (connection === 'close' && !lastDisconnect) {
+        console.log('⚠️ Conexão fechada sem motivo específico, aguardando QR...');
       }
     });
 
