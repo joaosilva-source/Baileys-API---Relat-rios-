@@ -32,7 +32,7 @@ async function connect() {
       defaultQueryTimeoutMs: 60000,
       keepAliveIntervalMs: 30000, // Keep-alive a cada 30 segundos
       markOnlineOnConnect: true,
-      printQRInTerminal: true,
+      printQRInTerminal: false, // Geramos manualmente para melhor controle
       browser: ['Relatorios API', 'Chrome', '1.0.0'],
       getMessage: async (key) => {
         return {
