@@ -15,6 +15,7 @@ let reconnecting = false;
 let reconnectAttempts = 0;
 let keepAliveInterval = null;
 let healthCheckInterval = null;
+let currentQR = null;
 
 async function connect() {
   if (reconnecting) return;
@@ -44,8 +45,14 @@ async function connect() {
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
-        console.log('\nESCANEIE O QR CODE AGORA:\n');
+        currentQR = qr;
+        console.log('\n═══════════════════════════════════════════════════════');
+        console.log('📱 ESCANEIE O QR CODE AGORA COM SEU WHATSAPP!');
+        console.log('═══════════════════════════════════════════════════════\n');
         qrcode.generate(qr, { small: true });
+        console.log('\n═══════════════════════════════════════════════════════');
+        console.log('💡 DICA: Acesse /qr no navegador para ver o QR Code');
+        console.log('═══════════════════════════════════════════════════════\n');
         reconnectAttempts = 0; // Reset ao mostrar QR
       }
 
@@ -141,7 +148,151 @@ connect();
 // Rota principal
 app.get('/', (req, res) => {
   const url = process.env.RENDER_EXTERNAL_URL || `https://${req.headers.host}`;
-  res.send(`API de Relatórios de Ligações - ONLINE\n\nPOST: ${url}/enviar-relatorio\nStatus: ${isConnected ? 'CONECTADO' : 'Desconectado'}`);
+  let html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>API de Relatórios de Ligações</title>
+      <meta charset="utf-8">
+      <style>
+        body { font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5; }
+        .container { max-width: 600px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; }
+        .status { padding: 10px; border-radius: 5px; margin: 10px 0; }
+        .online { background: #d4edda; color: #155724; }
+        .offline { background: #f8d7da; color: #721c24; }
+        .qr-link { display: block; margin: 20px 0; padding: 15px; background: #007bff; color: white; text-decoration: none; border-radius: 5px; text-align: center; }
+        .qr-link:hover { background: #0056b3; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <h1>📊 API de Relatórios de Ligações</h1>
+        <div class="status ${isConnected ? 'online' : 'offline'}">
+          Status: ${isConnected ? '🟢 CONECTADO' : '🔴 DESCONECTADO'}
+        </div>
+        ${currentQR && !isConnected ? '<a href="/qr" class="qr-link">📱 Ver QR Code para Conectar</a>' : ''}
+        <h2>Endpoints:</h2>
+        <ul>
+          <li><strong>GET</strong> /status - Status da conexão</li>
+          <li><strong>GET</strong> /qr - Ver QR Code (se disponível)</li>
+          <li><strong>POST</strong> /enviar-relatorio - Enviar relatório</li>
+          <li><strong>POST</strong> /enviar-relatorio-todos - Enviar para todos</li>
+        </ul>
+      </div>
+    </body>
+    </html>
+  `;
+  res.send(html);
+});
+
+// Rota para exibir QR Code
+app.get('/qr', (req, res) => {
+  if (!currentQR) {
+    return res.status(404).send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>QR Code não disponível</title>
+        <meta charset="utf-8">
+        <style>
+          body { font-family: Arial, sans-serif; padding: 20px; text-align: center; }
+          .message { background: #fff3cd; padding: 20px; border-radius: 5px; margin: 20px auto; max-width: 500px; }
+        </style>
+      </head>
+      <body>
+        <div class="message">
+          <h2>QR Code não disponível</h2>
+          <p>O QR Code só aparece quando o WhatsApp precisa ser conectado.</p>
+          <p>Status: ${isConnected ? '✅ Já está conectado!' : '⏳ Aguardando QR Code...'}</p>
+          <p><a href="/">← Voltar</a></p>
+        </div>
+      </body>
+      </html>
+    `);
+  }
+
+  // Usar API externa para gerar QR Code como imagem
+  const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(currentQR)}`;
+  
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>QR Code WhatsApp</title>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <style>
+        body { 
+          font-family: Arial, sans-serif; 
+          padding: 20px; 
+          background: #f5f5f5; 
+          text-align: center;
+        }
+        .container { 
+          max-width: 500px; 
+          margin: 0 auto; 
+          background: white; 
+          padding: 30px; 
+          border-radius: 10px; 
+          box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .qr-code { 
+          background: white; 
+          padding: 20px; 
+          margin: 20px 0; 
+          border: 2px solid #ddd;
+          border-radius: 5px;
+        }
+        .qr-code img {
+          max-width: 100%;
+          height: auto;
+        }
+        .instructions {
+          background: #e7f3ff;
+          padding: 15px;
+          border-radius: 5px;
+          margin: 20px 0;
+          text-align: left;
+        }
+        .instructions ol {
+          margin: 10px 0;
+          padding-left: 20px;
+        }
+        .back-link {
+          display: inline-block;
+          margin-top: 20px;
+          padding: 10px 20px;
+          background: #007bff;
+          color: white;
+          text-decoration: none;
+          border-radius: 5px;
+        }
+        .back-link:hover {
+          background: #0056b3;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <h1>📱 Escaneie o QR Code</h1>
+        <div class="qr-code">
+          <img src="${qrImageUrl}" alt="QR Code WhatsApp" />
+        </div>
+        <div class="instructions">
+          <h3>Como conectar:</h3>
+          <ol>
+            <li>Abra o WhatsApp no seu celular</li>
+            <li>Vá em <strong>Configurações</strong> → <strong>Aparelhos conectados</strong></li>
+            <li>Toque em <strong>Conectar um aparelho</strong></li>
+            <li>Escaneie o QR Code acima</li>
+          </ol>
+        </div>
+        <p><strong>Status:</strong> ${isConnected ? '✅ Conectado' : '⏳ Aguardando conexão...'}</p>
+        <a href="/" class="back-link">← Voltar</a>
+      </div>
+    </body>
+    </html>
+  `);
 });
 
 // Endpoint para enviar relatório de ligações
