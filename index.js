@@ -18,12 +18,24 @@ let healthCheckInterval = null;
 let currentQR = null;
 
 async function connect() {
-  if (reconnecting) return;
+  if (reconnecting) {
+    console.log('⏳ Já está reconectando, aguardando...');
+    return;
+  }
   reconnecting = true;
   isConnected = false;
 
   try {
+    console.log('🔌 Iniciando conexão com WhatsApp...');
     const { state, saveCreds } = await useMultiFileAuthState('auth');
+    
+    // Verificar se já tem credenciais salvas
+    const hasAuth = fs.existsSync('auth/creds.json');
+    if (hasAuth) {
+      console.log('✅ Credenciais encontradas, tentando reconectar...');
+    } else {
+      console.log('📱 Nenhuma credencial encontrada, será necessário escanear QR Code');
+    }
     
     sock = makeWASocket({
       auth: state,
@@ -48,7 +60,7 @@ async function connect() {
         currentQR = qr;
         console.log('\n');
         console.log('═══════════════════════════════════════════════════════');
-        console.log('📱 ESCANEIE O QR CODE AGORA COM SEU WHATSAPP!');
+        console.log('📱 QR CODE GERADO! ESCANEIE COM SEU WHATSAPP AGORA!');
         console.log('═══════════════════════════════════════════════════════');
         console.log('\n');
         
@@ -57,12 +69,18 @@ async function connect() {
           qrcode.generate(qr, { small: false });
         } catch (error) {
           // Se falhar, tentar com small
+          console.log('Tentando gerar QR Code em tamanho menor...');
           qrcode.generate(qr, { small: true });
         }
         
         console.log('\n');
         console.log('═══════════════════════════════════════════════════════');
-        console.log('💡 DICA: Acesse /qr no navegador para ver o QR Code');
+        const url = process.env.RENDER_EXTERNAL_URL || process.env.RENDER_EXTERNAL_HOSTNAME;
+        if (url) {
+          console.log(`💡 DICA: Acesse ${url}/qr no navegador para ver o QR Code`);
+        } else {
+          console.log('💡 DICA: Acesse /qr no navegador para ver o QR Code');
+        }
         console.log('═══════════════════════════════════════════════════════');
         console.log('\n');
         reconnectAttempts = 0; // Reset ao mostrar QR
@@ -90,21 +108,40 @@ async function connect() {
         console.log(`[CONEXÃO] Status: ${status}, Reason: ${DisconnectReason[status] || 'desconhecido'}`);
         
         if (status === DisconnectReason.loggedOut) {
-          console.log('DESLOGADO → Apagando auth...');
+          console.log('⚠️ DESLOGADO MANUALMENTE → Limpando autenticação...');
           try {
             if (fs.existsSync('auth')) {
               fs.rmSync('auth', { recursive: true, force: true });
-              console.log('Auth apagado com sucesso');
+              console.log('✅ Auth apagado com sucesso');
+            } else {
+              console.log('ℹ️ Pasta auth não existe (já estava limpa)');
             }
           } catch (error) {
-            console.log('Erro ao apagar auth:', error.message);
+            console.log('❌ Erro ao apagar auth:', error.message);
           }
+          
+          // Limpar estado completamente
           reconnectAttempts = 0;
+          currentQR = null;
+          isConnected = false;
+          
+          // Fechar socket atual se existir
+          if (sock) {
+            try {
+              sock.end();
+            } catch (e) {
+              console.log('Erro ao fechar socket:', e.message);
+            }
+            sock = null;
+          }
+          
+          console.log('🔄 Aguardando 2 segundos antes de gerar novo QR Code...');
           // Aguardar um pouco antes de reconectar após logout
           setTimeout(() => {
+            console.log('📱 Iniciando nova conexão para gerar QR Code...');
             reconnecting = false;
             connect();
-          }, 3000);
+          }, 2000);
         } else {
           // Retry exponencial: 2s, 4s, 8s, 16s, max 30s
           const delay = Math.min(2000 * Math.pow(2, reconnectAttempts), 30000);
