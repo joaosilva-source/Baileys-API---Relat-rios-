@@ -12,53 +12,128 @@ app.use(express.json());
 let sock = null;
 let isConnected = false;
 let reconnecting = false;
+let reconnectAttempts = 0;
+let keepAliveInterval = null;
+let healthCheckInterval = null;
 
 async function connect() {
   if (reconnecting) return;
   reconnecting = true;
   isConnected = false;
 
-  const { state, saveCreds } = await useMultiFileAuthState('auth');
-  
-  sock = makeWASocket({
-    auth: state,
-    logger: pino({ level: 'silent' }),
-    connectTimeoutMs: 60000,
-    defaultQueryTimeoutMs: 60000,
-  });
-
-  sock.ev.on('connection.update', (update) => {
-    const { connection, lastDisconnect, qr } = update;
-
-    if (qr) {
-      console.log('\nESCANEIE O QR CODE AGORA:\n');
-      qrcode.generate(qr, { small: true });
-    }
-
-    if (connection === 'open') {
-      isConnected = true;
-      reconnecting = false;
-      console.log('\nWHATSAPP CONECTADO! API PRONTA!');
-      const url = process.env.RENDER_EXTERNAL_URL || `https://${process.env.RENDER_EXTERNAL_HOSTNAME}`;
-      console.log(`API ONLINE: ${url}/enviar-relatorio`);
-    }
-
-    if (connection === 'close') {
-      isConnected = false;
-      const status = lastDisconnect?.error?.output?.statusCode;
-      if (status === DisconnectReason.loggedOut) {
-        console.log('DESLOGADO → Apagando auth...');
-        fs.rmSync('auth', { recursive: true, force: true });
+  try {
+    const { state, saveCreds } = await useMultiFileAuthState('auth');
+    
+    sock = makeWASocket({
+      auth: state,
+      logger: pino({ level: 'silent' }),
+      connectTimeoutMs: 60000,
+      defaultQueryTimeoutMs: 60000,
+      keepAliveIntervalMs: 30000, // Keep-alive a cada 30 segundos
+      markOnlineOnConnect: true,
+      printQRInTerminal: true,
+      browser: ['Relatorios API', 'Chrome', '1.0.0'],
+      getMessage: async (key) => {
+        return {
+          conversation: 'Mensagem não disponível'
+        };
       }
-      console.log(`DESCONECTADO (${status || 'desconhecido'}) → Reconectando em 2s...`);
-      setTimeout(() => {
-        reconnecting = false;
-        connect();
-      }, 2000);
-    }
-  });
+    });
 
-  sock.ev.on('creds.update', saveCreds);
+    sock.ev.on('connection.update', (update) => {
+      const { connection, lastDisconnect, qr } = update;
+
+      if (qr) {
+        console.log('\nESCANEIE O QR CODE AGORA:\n');
+        qrcode.generate(qr, { small: true });
+        reconnectAttempts = 0; // Reset ao mostrar QR
+      }
+
+      if (connection === 'open') {
+        isConnected = true;
+        reconnecting = false;
+        reconnectAttempts = 0;
+        console.log('\nWHATSAPP CONECTADO! API PRONTA!');
+        const url = process.env.RENDER_EXTERNAL_URL || `https://${process.env.RENDER_EXTERNAL_HOSTNAME}`;
+        console.log(`API ONLINE: ${url}/enviar-relatorio`);
+        
+        // Iniciar keep-alive
+        iniciarKeepAlive();
+      }
+
+      if (connection === 'close') {
+        isConnected = false;
+        pararKeepAlive();
+        
+        const status = lastDisconnect?.error?.output?.statusCode;
+        const shouldReconnect = status !== DisconnectReason.loggedOut;
+        
+        if (status === DisconnectReason.loggedOut) {
+          console.log('DESLOGADO → Apagando auth...');
+          fs.rmSync('auth', { recursive: true, force: true });
+          reconnectAttempts = 0;
+        } else {
+          // Retry exponencial: 2s, 4s, 8s, 16s, max 30s
+          const delay = Math.min(2000 * Math.pow(2, reconnectAttempts), 30000);
+          reconnectAttempts++;
+          console.log(`DESCONECTADO (${status || 'desconhecido'}) → Reconectando em ${delay/1000}s... (tentativa ${reconnectAttempts})`);
+          
+          if (shouldReconnect) {
+            setTimeout(() => {
+              reconnecting = false;
+              connect();
+            }, delay);
+          }
+        }
+      }
+
+      // Detectar conexão instável
+      if (connection === 'connecting') {
+        console.log('Conectando ao WhatsApp...');
+      }
+    });
+
+    sock.ev.on('creds.update', saveCreds);
+    
+    // Listener para erros
+    sock.ev.on('messages.upsert', () => {
+      // Manter conexão ativa ao receber mensagens
+    });
+    
+  } catch (error) {
+    console.error('Erro ao conectar:', error);
+    reconnecting = false;
+    setTimeout(() => connect(), 5000);
+  }
+}
+
+// Função para manter conexão ativa
+function iniciarKeepAlive() {
+  pararKeepAlive(); // Limpar intervalo anterior se existir
+  
+  keepAliveInterval = setInterval(async () => {
+    if (sock && isConnected) {
+      try {
+        // Enviar ping para manter conexão viva
+        await sock.sendPresenceUpdate('available');
+        console.log('[KEEP-ALIVE] Conexão mantida ativa');
+      } catch (error) {
+        console.log('[KEEP-ALIVE] Erro:', error.message);
+        // Se houver erro, tentar reconectar
+        if (error.message.includes('close') || error.message.includes('disconnect')) {
+          isConnected = false;
+          connect();
+        }
+      }
+    }
+  }, 30000); // A cada 30 segundos
+}
+
+function pararKeepAlive() {
+  if (keepAliveInterval) {
+    clearInterval(keepAliveInterval);
+    keepAliveInterval = null;
+  }
 }
 
 connect();
@@ -157,8 +232,40 @@ app.get('/grupos', async (req, res) => {
 app.get('/status', (req, res) => {
   res.json({
     conectado: isConnected,
-    status: isConnected ? 'ONLINE' : 'OFFLINE'
+    status: isConnected ? 'ONLINE' : 'OFFLINE',
+    tentativasReconexao: reconnectAttempts
   });
+});
+
+// Health check endpoint para o Render (mantém serviço ativo)
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    whatsapp: isConnected ? 'conectado' : 'desconectado',
+    uptime: process.uptime()
+  });
+});
+
+// Endpoint para forçar reconexão
+app.post('/reconnect', async (req, res) => {
+  if (sock) {
+    try {
+      await sock.end();
+    } catch (e) {
+      console.log('Erro ao encerrar conexão:', e);
+    }
+  }
+  
+  reconnecting = false;
+  reconnectAttempts = 0;
+  isConnected = false;
+  pararKeepAlive();
+  
+  setTimeout(() => {
+    connect();
+    res.json({ mensagem: 'Reconexão iniciada' });
+  }, 1000);
 });
 
 // Endpoint para enviar relatório para todos os destinatários configurados
@@ -205,7 +312,64 @@ app.post('/enviar-relatorio-todos', async (req, res) => {
   }
 });
 
+// Iniciar health check automático (mantém serviço ativo no Render)
+function iniciarHealthCheck() {
+  const url = process.env.RENDER_EXTERNAL_URL || process.env.RENDER_EXTERNAL_HOSTNAME;
+  
+  if (url && !url.includes('localhost')) {
+    healthCheckInterval = setInterval(() => {
+      try {
+        const http = require('http');
+        const https = require('https');
+        const urlObj = new URL(url.startsWith('http') ? url : `https://${url}`);
+        const isHttps = urlObj.protocol === 'https:';
+        const client = isHttps ? https : http;
+        
+        const options = {
+          hostname: urlObj.hostname,
+          port: urlObj.port || (isHttps ? 443 : 80),
+          path: '/health',
+          method: 'GET',
+          headers: { 'User-Agent': 'Render-Health-Check' },
+          timeout: 5000
+        };
+        
+        const req = client.request(options, (res) => {
+          console.log('[HEALTH-CHECK] Serviço mantido ativo - Status:', res.statusCode);
+          res.on('data', () => {}); // Consumir resposta
+        });
+        
+        req.on('error', (error) => {
+          console.log('[HEALTH-CHECK] Erro:', error.message);
+        });
+        
+        req.on('timeout', () => {
+          req.destroy();
+        });
+        
+        req.end();
+      } catch (error) {
+        console.log('[HEALTH-CHECK] Erro:', error.message);
+      }
+    }, 60000); // A cada 1 minuto
+  }
+}
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
+  iniciarHealthCheck();
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM recebido, encerrando...');
+  pararKeepAlive();
+  if (healthCheckInterval) {
+    clearInterval(healthCheckInterval);
+  }
+  if (sock) {
+    sock.end();
+  }
+  process.exit(0);
 });

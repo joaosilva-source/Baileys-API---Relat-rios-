@@ -105,7 +105,13 @@ Para alterar os números, edite o arquivo `config/destinatarios.js` e faça um n
 
 3. **Logout**: Se você deslogar manualmente do WhatsApp, será necessário escanear o QR Code novamente.
 
-4. **Plano Free**: O plano gratuito do Render coloca o serviço em "sleep" após 15 minutos de inatividade. Para produção, considere um plano pago.
+4. **Mantendo Conexão Ativa**: 
+   - ✅ Keep-alive automático a cada 30 segundos
+   - ✅ Health check automático a cada 1 minuto (mantém serviço ativo)
+   - ✅ Reconexão automática com retry exponencial
+   - ✅ Health check endpoint configurado no Render
+
+5. **Plano Free**: O plano gratuito do Render coloca o serviço em "sleep" após 15 minutos de inatividade. O health check automático ajuda a manter o serviço ativo, mas para produção 24/7, considere um plano pago.
 
 ## Troubleshooting
 
@@ -114,8 +120,10 @@ Para alterar os números, edite o arquivo `config/destinatarios.js` e faça um n
 - Certifique-se de que o serviço está rodando
 
 **Problema: WhatsApp desconecta frequentemente**
-- Verifique a conexão de rede
-- No plano free, o serviço pode entrar em sleep - faça uma requisição para "acordar"
+- O sistema tem keep-alive automático e reconexão automática
+- Verifique os logs para ver tentativas de reconexão
+- Use `POST /reconnect` para forçar reconexão manual se necessário
+- No plano free, o health check automático ajuda a manter o serviço ativo
 
 **Problema: Mensagens não são enviadas**
 - Verifique o status: `GET /status`
